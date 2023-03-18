@@ -1,1 +1,1 @@
-# Simple Text Editor in C++ with FLTK!
+# Simple Text Editor in C!
