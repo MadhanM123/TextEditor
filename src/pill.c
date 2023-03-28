@@ -1,7 +1,6 @@
 #include <stdio.h>
 
 int main(){
-    printf("Hello World!");
-
+    printf("PILL IS RUNNING");
     return 0;
 }
