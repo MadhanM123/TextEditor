@@ -4,7 +4,8 @@
 #include <errno.h>
 #include <ctype.h>
 #include <unistd.h>
-#include <termios.h>
+
+#include <string.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
 #include <string.h>
@@ -43,12 +44,52 @@ void enableRawMode(){
     if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
-char readKey(){
+int readKey(){
     int nread;
     char c;
 
     while((nread = read(STDIN_FILENO, &c, 1)) != 1){
         if(nread == -1 && errno != EAGAIN) die("read");
+    }
+
+    if(c == '\x1b'){
+        char seq[3];
+
+        if(read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if(read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+
+        if(seq[0] == '['){
+            if(seq[1] >= '0' && seq[1] <= '9'){
+                if(read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
+                if(seq[2] == '~'){
+                    switch(seq[1]){
+                        case '1': return HOME_KEY;
+                        case '3': return DELETE_KEY;
+                        case '4': return END_KEY;
+                        case '5': return PAGE_UP;
+                        case '6': return PAGE_DOWN;
+                        case '7': return HOME_KEY;
+                        case '8': return END_KEY;
+                    }
+                }
+            }
+            else{
+                switch(seq[1]){
+                    case 'A': return ARROW_UP;
+                    case 'B': return ARROW_DOWN;
+                    case 'C': return ARROW_RIGHT;
+                    case 'D': return ARROW_LEFT;
+                    case 'H': return HOME_KEY;
+                    case 'F': return END_KEY;
+                }
+            }
+        }
+        else if(seq[0] == 'O'){
+            switch(seq[1]){
+                case 'H': return HOME_KEY;
+                case 'F': return END_KEY;
+            }
+        }
     }
 
     return c;
@@ -93,19 +134,71 @@ int cursorPos(int* rows, int* cols){
 
 /* Append Buffer */
 
-void append(struct abuf* ab, const char* s, int len){
-    
+void bufferAppend(struct abuf* ab, const char* s, int len){
+    char* new = realloc(ab->b, ab->len + len);
+
+    if(new == NULL) return;
+    memcpy(&new[ab->len], s, len);
+    ab->b = new;
+    ab->len += len;
+}
+
+void bufferFree(struct abuf* ab){
+    free(ab->b);
 }
 
 /* Input */
 
+void moveCursor(int key){
+    switch(key){
+        case ARROW_UP:
+            if(C.cy != 0) C.cy--;
+            break;
+        case ARROW_LEFT:
+            if(C.cx != 0) C.cx--;
+            break;
+        case ARROW_DOWN:
+            if(C.cy != C.rows - 1) C.cy++;
+            break;
+        case ARROW_RIGHT:
+            if(C.cx != C.cols - 1) C.cx++;
+            break;
+    }
+}
+
 void processKeyPress(){
-    char c = readKey();
+    int c = readKey();
 
     switch(c){
         case CTRL_KEY('q'):
-            refreshScreen();
+            write(STDOUT_FILENO, "\x1b[2J", 4);
+            write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
+            break;
+
+        case HOME_KEY:
+            C.cx = 0;
+            break;
+        case END_KEY:
+            C.cx = C.cols - 1;
+            break;
+        
+
+        case PAGE_UP:
+        case PAGE_DOWN:
+            {
+                int scroll = C.rows;
+                while(scroll--){
+                    moveCursor(PAGE_UP ? ARROW_UP : ARROW_DOWN);
+                }
+            }
+            break;
+
+        case ARROW_UP:
+        case ARROW_LEFT:
+        case ARROW_RIGHT:
+        case ARROW_DOWN:
+            moveCursor(c);
             break;
     }
 }
@@ -113,20 +206,45 @@ void processKeyPress(){
 /* Output */
 
 void refreshScreen(){
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3); //Moves cursor to home position
+    struct abuf ab = INIT_ABUF;
 
-    drawRows();
+    bufferAppend(&ab, "\x1b[?25l", 6);
 
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    bufferAppend(&ab, "\x1b[H", 3); // Moves cursor to home position
+
+    drawRows(&ab);
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", C.cy + 1, C.cx + 1);
+    bufferAppend(&ab, buf, strlen(buf));
+
+    bufferAppend(&ab, "\x1b[?25h", 6);
+
+    write(STDOUT_FILENO, ab.b, ab.len);
 }
 
-void drawRows(){
+void drawRows(struct abuf* ab){
     for(int y = 0; y < C.rows; y++){
-        write(STDOUT_FILENO, "~", 1);
-
+        
+        if(y == C.rows / 3){
+            char welcomeMsg[80];
+            int msglen = snprintf(welcomeMsg, sizeof(welcomeMsg), "Pill editor -- version %s", PILL_VERSION);
+            msglen = msglen > C.cols ? C.cols : msglen;
+            int pad = (C.cols  - msglen) / 2;
+            if(pad){
+                bufferAppend(ab, "~", 1);
+                pad--;
+            }
+            while(pad--) bufferAppend(ab, " ", 1);
+            bufferAppend(ab, welcomeMsg, msglen);
+        }
+        else{
+            bufferAppend(ab, "~", 1);
+        }
+    
+        bufferAppend(ab, "\x1b[K", 3);
         if(y < C.rows - 1){
-            write(STDOUT_FILENO, "\r\n", 2);
+            bufferAppend(ab, "\r\n", 2);
         }
     }
 }
@@ -135,6 +253,8 @@ void drawRows(){
 /* Init */
 
 void startEditor(){
+    C.cx = 0;
+    C.cy = 0;
     if(windowSize(&C.rows, &C.cols) == -1) die("windowSize");
 }
 

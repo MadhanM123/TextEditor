@@ -1,9 +1,25 @@
 #ifndef PILL_H
 #define PILL_H
 
+#include <termios.h>
+
 /* Defines */
 
+#define PILL_VERSION "1"
+
 #define CTRL_KEY(k) ((k) & 0x1f)
+
+enum ARROW_KEYS{
+    ARROW_LEFT = 1000,
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN,
+    DELETE_KEY,
+    HOME_KEY,
+    END_KEY, 
+    PAGE_UP,
+    PAGE_DOWN,
+};
 
 /* Data */
 
@@ -11,6 +27,7 @@ struct config{
     int rows;
     int cols;
     struct termios orig_termios;
+    int cx, cy;
 };
 
 /* Termio */
@@ -21,7 +38,7 @@ void disableRawMode();
 
 void enableRawMode();
 
-char readKey();
+int readKey();
 
 int windowSize(int* rows, int* cols);
 
@@ -40,11 +57,13 @@ struct abuf{
 
 void processKeyPress();
 
+void moveCursor(int key);
+
 /* Output */
 
 void refreshScreen();
 
-void drawRows();
+void drawRows(struct abuf* ab);
 
 /* Init */
 
