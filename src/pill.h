@@ -23,12 +23,21 @@ enum ARROW_KEYS{
 
 /* Data */
 
+struct edRow{
+    int sz;
+    char* chars;
+};
+
 struct config{
     int rows;
     int cols;
     struct termios orig_termios;
     int cx, cy;
+    int numRows;
+    struct edRow* row;
 };
+
+
 
 /* Termio */
 
@@ -43,6 +52,14 @@ int readKey();
 int windowSize(int* rows, int* cols);
 
 int cursorPos(int* rows, int* cols);
+
+/* Row Methods */
+
+void edAppendRow(char* s, size_t len);
+
+/* File I/O */
+
+void edOpen(char* filename);
 
 /* Append Buffer */
 

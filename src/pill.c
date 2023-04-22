@@ -1,5 +1,9 @@
 /* Includes */
 
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <errno.h>
 #include <ctype.h>
@@ -8,6 +12,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <string.h>
 #include "pill.h"
 
@@ -132,6 +137,30 @@ int cursorPos(int* rows, int* cols){
     return -1;
 }
 
+/* File I/O */
+
+void edOpen(char* filename){
+    FILE* fp = fopen(filename, "r");
+    if(!fp) die("fopen");
+
+    char* line = NULL;
+    size_t capacity = 0;
+    ssize_t len;
+    len = getline(&line, &capacity, fp);
+    if(len != -1){
+        while(len > 0 && line[len - 1] == '\n' || line[len - 1] == '\r'){
+            len--;
+        }
+        C.row.sz = len;
+        C.row.chars = malloc(len + 1);
+        memcpy(C.row.chars, line, len);
+        C.row.chars[len] = '\0';
+        C.numRows = 1;
+    }
+    free(line);
+    fclose(fp);
+}
+
 /* Append Buffer */
 
 void bufferAppend(struct abuf* ab, const char* s, int len){
@@ -225,26 +254,32 @@ void refreshScreen(){
 
 void drawRows(struct abuf* ab){
     for(int y = 0; y < C.rows; y++){
-        
-        if(y == C.rows / 3){
-            char welcomeMsg[80];
-            int msglen = snprintf(welcomeMsg, sizeof(welcomeMsg), "Pill editor -- version %s", PILL_VERSION);
-            msglen = msglen > C.cols ? C.cols : msglen;
-            int pad = (C.cols  - msglen) / 2;
-            if(pad){
-                bufferAppend(ab, "~", 1);
-                pad--;
+        if(y > C.numRows){
+            if(C.numRows == 0 && y == C.rows / 3){
+                char welcomeMsg[80];
+                int msglen = snprintf(welcomeMsg, sizeof(welcomeMsg), "Pill editor -- version %s", PILL_VERSION);
+                msglen = msglen > C.cols ? C.cols : msglen;
+                int pad = (C.cols  - msglen) / 2;
+                if(pad){
+                    bufferAppend(ab, "~", 1);
+                    pad--;
+                }
+                while(pad--) bufferAppend(ab, " ", 1);
+                bufferAppend(ab, welcomeMsg, msglen);
             }
-            while(pad--) bufferAppend(ab, " ", 1);
-            bufferAppend(ab, welcomeMsg, msglen);
+            else{
+                bufferAppend(ab, "~", 1);
+            }
+        
+            bufferAppend(ab, "\x1b[K", 3);
+            if(y < C.rows - 1){
+                bufferAppend(ab, "\r\n", 2);
+            }
         }
         else{
-            bufferAppend(ab, "~", 1);
-        }
-    
-        bufferAppend(ab, "\x1b[K", 3);
-        if(y < C.rows - 1){
-            bufferAppend(ab, "\r\n", 2);
+            int len = C.row.sz;
+            if(len > C.cols) len = C.cols;
+            bufferAppend(ab, C.row.chars, len);
         }
     }
 }
@@ -255,14 +290,19 @@ void drawRows(struct abuf* ab){
 void startEditor(){
     C.cx = 0;
     C.cy = 0;
+    C.numRows = 0;
+    C.row = NULL;
     if(windowSize(&C.rows, &C.cols) == -1) die("windowSize");
 }
 
-int main(){
+int main(int argc, char *argv[]){
     printf("PILL IS RUNNING");
 
     enableRawMode();
     startEditor();
+    if(argc >= 2){
+        edOpen(argv[1]);
+    }
 
     while(1){
         refreshScreen();
